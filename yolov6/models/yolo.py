@@ -10,11 +10,13 @@ from yolov6.models.efficientrep import *
 from yolov6.models.reppan import *
 from yolov6.utils.events import LOGGER
 
-from yolov6.models.c_ghostNet import ghostnet
-from yolov6.models.g_ghostNet import g_ghost_regnetx_t
+# from yolov6.models.c_ghostNet import ghostnet
+# from yolov6.models.g_ghostNet import g_ghost_regnetx_t
+#
+# from yolov6.models.mobileNet_v3 import mobilenet_v3_large, mobilenet_v3_small
+# from yolov6.models.shuffleNet_v2 import shufflenet_v2_x0_5, shufflenet_v2_x1_0
 
-from yolov6.models.mobileNet_v3 import mobilenet_v3_large, mobilenet_v3_small
-from yolov6.models.shuffleNet_v2 import shufflenet_v2_x0_5, shufflenet_v2_x1_0
+from gold_yolo.reppan import *
 
 
 class Model(nn.Module):
@@ -73,8 +75,8 @@ def build_network(config, channels, num_classes, num_layers, fuse_ab=False, dist
     channels_list = [make_divisible(i * width_mul, 8) for i in (channels_list_backbone + channels_list_neck)]
 
     block = get_block(config.training_mode)
-    # BACKBONE = eval(config.model.backbone.type)
-    BACKBONE = config.model.backbone.type
+    BACKBONE = eval(config.model.backbone.type)
+    # BACKBONE = config.model.backbone.type
     NECK = eval(config.model.neck.type)
 
     if 'CSP' in config.model.backbone.type:
@@ -117,13 +119,14 @@ def build_network(config, channels, num_classes, num_layers, fuse_ab=False, dist
 
         # backbone = shufflenet_v2_x0_5(num_classes=num_classes)
 
-        backbone = ghostnet()
+        # backbone = ghostnet()
         # backbone = g_ghost_regnetx_t()
 
         neck = NECK(
             channels_list=channels_list,
             num_repeats=num_repeat,
-            block=block
+            block=block,
+            extra_cfg=neck_extra_cfg  # TODO: gold neck use this
         )
 
     if distill_ns:
