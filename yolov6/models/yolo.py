@@ -16,7 +16,7 @@ from yolov6.utils.events import LOGGER
 # from yolov6.models.mobileNet_v3 import mobilenet_v3_large, mobilenet_v3_small
 # from yolov6.models.shuffleNet_v2 import shufflenet_v2_x0_5, shufflenet_v2_x1_0
 
-from gold_yolo.reppan import *
+# from gold_yolo.reppan import *
 
 
 class Model(nn.Module):
@@ -109,7 +109,8 @@ def build_network(config, channels, num_classes, num_layers, fuse_ab=False, dist
             in_channels=channels,
             channels_list=channels_list,
             num_repeats=num_repeat,
-            block=block,
+            # block=block,
+            block=ACBlock,
             fuse_P2=fuse_P2,
             cspsppf=cspsppf
         )
@@ -126,7 +127,7 @@ def build_network(config, channels, num_classes, num_layers, fuse_ab=False, dist
             channels_list=channels_list,
             num_repeats=num_repeat,
             block=block,
-            extra_cfg=neck_extra_cfg  # TODO: gold neck use this
+            # extra_cfg=neck_extra_cfg  # TODO: gold neck use this
         )
 
     if distill_ns:

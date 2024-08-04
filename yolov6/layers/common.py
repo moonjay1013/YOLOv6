@@ -580,11 +580,35 @@ class RepBlock(nn.Module):
             n = n // 2
             self.block = nn.Sequential(*(BottleRep(out_channels, out_channels, basic_block=basic_block, weight=True) for _ in range(n - 1))) if n > 1 else None
 
+        elif block == RepC2f:
+            self.conv1 = None
+            n = n // 2 if n > 2 else n - 1
+            self.block = nn.Sequential(
+                *(RepC2f(out_channels, out_channels, n=2) for _ in
+                  range(n))) if n >= 1 else None
+
     def forward(self, x):
         x = self.conv1(x)
         if self.block is not None:
             x = self.block(x)
         return x
+
+
+###########################
+# RepC2f - Base on ACBlock
+###########################
+class RepC2f(nn.Module):
+    def __init__(self, c1, c2, n=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
+        super().__init__()
+        self.c = int(c2 * e)  # hidden channels
+        self.cv1 = ConvBNReLU(c1, self.c, kernel_size=1, stride=1)
+        self.cv2 = ConvBNReLU((1 + n) * self.c, c2, kernel_size=1, stride=1)  # optional act=FReLU(c2)
+        self.m = nn.ModuleList(ACBlock(self.c, self.c) for _ in range(n))
+
+    def forward(self, x):
+        y = [self.cv1(x)]
+        y.extend(m(y[-1]) for m in self.m)
+        return self.cv2(torch.cat(y, 1))
 
 
 class BottleRep(nn.Module):
@@ -984,3 +1008,169 @@ class CSPBlock(nn.Module):
         x = torch.cat((x_1, x_2), axis=1)
         x = self.conv_3(x)
         return x
+
+
+#######################################
+# 3x3 + 3x1 + 1x3
+#######################################
+class ACBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3,
+                 stride=1, padding=1, dilation=1, groups=1, padding_mode='zeros', deploy=False, use_se=False, use_act=True):
+        super(ACBlock, self).__init__()
+
+        self.deploy = deploy
+        self.groups = groups
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+
+        assert kernel_size == 3
+        assert padding == 1
+
+        if use_act:
+            self.nonlinearity = nn.ReLU()
+        else:
+            self.nonlinearity = nn.Identity()
+
+        if use_se:
+            raise NotImplementedError("se block not supported yet")
+        else:
+            self.se = nn.Identity()
+
+        if deploy:
+            self.rbr_reparam = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size,
+                                         stride=stride,
+                                         padding=padding, dilation=dilation, groups=groups, bias=True,
+                                         padding_mode=padding_mode)
+        else:
+
+            self.rbr_identity = nn.BatchNorm2d(num_features=in_channels) if out_channels == in_channels and stride == 1 else None
+            self.rbr_dense = ConvModule(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size,
+                                        stride=stride, activation_type=None, padding=padding, groups=groups)
+            if padding - kernel_size // 2 >= 0:
+                #   Common use case. E.g., k=3, p=1 or k=5, p=2
+                self.crop = 0
+                # Compared to the KxK layer,
+                # the padding of the 1xK layer and Kx1 layer should be adjust to
+                # align the sliding windows (Fig 2 in the paper)
+                hor_padding = [padding - kernel_size // 2, padding]
+                ver_padding = [padding, padding - kernel_size // 2]
+            else:
+                #   A negative "padding" (padding - kernel_size//2 < 0, which is not a common use case) is cropping.
+                #   Since nn.Conv2d does not support negative padding, we implement it manually
+                self.crop = kernel_size // 2 - padding
+                hor_padding = [0, padding]
+                ver_padding = [padding, 0]
+
+            self.ver_conv = ConvModule(in_channels=in_channels, out_channels=out_channels, kernel_size=(kernel_size, 1),
+                                       stride=stride, activation_type=None,
+                                       padding=ver_padding, groups=groups)
+
+            self.hor_conv = ConvModule(in_channels=in_channels, out_channels=out_channels, kernel_size=(1, kernel_size),
+                                       stride=stride, activation_type=None,
+                                       padding=hor_padding, groups=groups)
+
+    def _fuse_bn_tensor(self, branch):
+        if branch is None:
+            return 0, 0
+        if isinstance(branch, ConvModule):
+            kernel = branch.conv.weight
+            bias = branch.conv.bias
+            return kernel, bias
+        else:
+            assert isinstance(branch, nn.BatchNorm2d)
+            if not hasattr(self, 'id_tensor'):
+                input_dim = self.in_channels // self.groups
+                kernel_value = np.zeros((self.in_channels, input_dim, 3, 3), dtype=np.float32)
+                for i in range(self.in_channels):
+                    kernel_value[i, i % input_dim, 1, 1] = 1
+                self.id_tensor = torch.from_numpy(kernel_value).to(branch.weight.device)
+            kernel = self.id_tensor
+            running_mean = branch.running_mean
+            running_var = branch.running_var
+            gamma = branch.weight
+            beta = branch.bias
+            eps = branch.eps
+            std = (running_var + eps).sqrt()
+            t = (gamma / std).reshape(-1, 1, 1, 1)
+            return kernel * t, beta - running_mean * gamma / std
+
+    def _add_to_square_kernel(self, square_kernel, asym_kernel):
+        asym_h = asym_kernel.size(2)
+        asym_w = asym_kernel.size(3)
+        square_h = square_kernel.size(2)
+        square_w = square_kernel.size(3)
+        square_kernel[:, :, square_h // 2 - asym_h // 2: square_h // 2 - asym_h // 2 + asym_h,
+        square_w // 2 - asym_w // 2: square_w // 2 - asym_w // 2 + asym_w] += asym_kernel
+
+    def get_equivalent_kernel_bias(self):
+        kernel3x3, bias3x3 = self._fuse_bn_tensor(self.rbr_dense)
+        kernelid, biasid = self._fuse_bn_tensor(self.rbr_identity)
+        hor_k, hor_b = self._fuse_bn_tensor(self.hor_conv)
+        ver_k, ver_b = self._fuse_bn_tensor(self.ver_conv)
+        self._add_to_square_kernel(kernel3x3, hor_k)
+        self._add_to_square_kernel(kernel3x3, ver_k)  # AC 1x3 and 3x1 already add kernel3x3
+
+        return kernel3x3 + kernelid, bias3x3 + biasid + hor_b + ver_b
+
+    def switch_to_deploy(self):
+        if hasattr(self, 'rbr_reparam'):
+            return
+        kernel, bias = self.get_equivalent_kernel_bias()
+        self.rbr_reparam = nn.Conv2d(in_channels=self.rbr_dense.conv.in_channels,
+                                     out_channels=self.rbr_dense.conv.out_channels,
+                                     kernel_size=self.rbr_dense.conv.kernel_size, stride=self.rbr_dense.conv.stride,
+                                     padding=self.rbr_dense.conv.padding, dilation=self.rbr_dense.conv.dilation,
+                                     groups=self.rbr_dense.conv.groups, bias=True)
+        self.rbr_reparam.weight.data = kernel
+        self.rbr_reparam.bias.data = bias
+        for para in self.parameters():
+            para.detach_()
+        self.__delattr__('rbr_dense')
+
+        if hasattr(self, 'id_tensor'):
+            self.__delattr__('id_tensor')
+
+        self.__delattr__('hor_conv')
+        self.__delattr__('ver_conv')
+
+        self.deploy = True
+
+    def forward(self, inputs):
+        '''Forward process'''
+        if hasattr(self, 'rbr_reparam'):
+            return self.nonlinearity(self.se(self.rbr_reparam(inputs)))
+
+        if self.crop > 0:
+            ver_input = inputs[:, :, :, self.crop:-self.crop]
+            hor_input = inputs[:, :, self.crop:-self.crop, :]
+        else:
+            ver_input = inputs
+            hor_input = inputs
+
+        if self.rbr_identity is None:
+            id_out = 0
+        else:
+            id_out = self.rbr_identity(inputs)
+
+        vertical_outputs = self.ver_conv(ver_input)
+        horizontal_outputs = self.hor_conv(hor_input)
+        ac_result = vertical_outputs + horizontal_outputs
+
+        return self.nonlinearity(self.se(self.rbr_dense(inputs) + ac_result + id_out))
+
+
+class VoVRepStage(nn.Module):
+    # n=4 or 6
+    def __init__(self, c1, c2, n=4, cheap_ratio=0.5, block=RepVGGBlock):
+        super(VoVRepStage, self).__init__()
+        assert c1 == c2
+        c_ = int(c2 * cheap_ratio)
+        self.cv1 = ConvBNReLU(c1, c_, 1, 1)  # 1x1 conv decrease channels
+        self.rep_osa = nn.ModuleList(block(c_, c_) for _ in range(n))
+        self.cv2 = ConvBNReLU((n + 1) * c_, c2, 1, 1)
+
+    def forward(self, input):
+        y = [self.cv1(input)]
+        y.extend(m(y[-1]) for m in self.rep_osa)
+        out = self.cv2(torch.cat(y, 1))
+        return out
