@@ -1,7 +1,7 @@
 # Please insure that your custom_dataset are put in same parent dir with YOLOv6_DIR
-train: VOCdevkit/voc_07_12/images/train # train images
-val: VOCdevkit/voc_07_12/images/val # val images
-test: VOCdevkit/voc_07_12/images/val # test images (optional)
+train: /home/moonjay/datasets/VOCdevkit/voc_07_12/voc_07+12/images/trainval # train images 16551
+val: /home/moonjay/datasets/VOCdevkit/voc_07_12/voc_07+12/images/test # val images  4952 (VOC 2007 Test)
+test: /home/moonjay/datasets/VOCdevkit/voc_07_12/voc_07+12/images/test # test images (optional)
 
 # whether it is coco dataset, only coco dataset should be set to True.
 is_coco: False

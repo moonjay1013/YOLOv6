@@ -1,0 +1,29 @@
+train: E:/DataSets/Resized_SWG7/images/train
+val: E:/DataSets/Resized_SWG7/images/val
+test: E:/DataSets/Resized_SWG7/images/test  # generalize
+
+speed: E:/DataSets/Resized_SWG7/images/val
+
+#AutoAnchor: thr=0.25: 0.9967 best possible recall, 7.20 anchors past thr
+#AutoAnchor: n=9, img_size=640, metric_all=0.437/0.776-mean/best,
+#past_thr=0.502-mean: [[39,59, 76,43, 81,82], [139,57, 95,145, 148,99], [244,118, 188,208, 372,234]]
+
+#AutoAnchor: thr=0.25: 0.9967 best possible recall, 5.09 anchors past thr
+#AutoAnchor: n=6, img_size=640, metric_all=0.464/0.747-mean/best,
+#past_thr=0.514-mean: 40,59, 85,45, 81,82, 149,78, 108,141, 242,167
+
+#AutoAnchor: thr=0.25: 0.9953 best possible recall, 3.49 anchors past thr
+#AutoAnchor: n=4, img_size=640, metric_all=0.477/0.701-mean/best,
+#past_thr=0.520-mean: [[55,51, 84,98], [140,71, 216,158]]
+
+is_coco: False
+# Classes
+nc: 7  # number of classes
+names: ['spotted_linsang', 'blue_whistling_thrush',
+        'red_muntjac', 'chevrotain', 'large_indian_civet',
+        'macaque_not_stump_tailed', 'red_shanked_douc']
+
+#names: ['Prionodon pardicolor', 'Myophonus caeruleus',
+#        'Muntiacus muntjak', 'Tragulus kanchil', 'Viverra zibetha',
+#        'Macaca mulatta', ' Pygathrix nemaeus']
+

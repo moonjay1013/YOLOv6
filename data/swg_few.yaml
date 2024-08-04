@@ -1,0 +1,18 @@
+train: /home/moonjay/datasets/swg_100_500/images/train
+val: /home/moonjay/datasets/swg_100_500/images/val
+test: /home/moonjay/datasets/swg_100_500/images/test  # generalize
+
+speed: /home/moonjay/datasets/swg_100_500/images/val
+
+# thr=0.25: 0.9954 best possible recall, 3.24 anchors past thr
+# AutoAnchor: n=4, img_size=640, metric_all=0.447/0.681-mean/best, past_thr=0.511-mean:
+#  - [44,50, 98,55]
+#  - [107,106, 234,154]
+
+is_coco: False
+# Classes
+nc: 11  # number of classes
+names: ['spotted_linsang', 'unidentified_animal', 'blue_whistling_thrush',
+        'red_muntjac', 'chevrotain','unidentified_mammal',
+        'large_indian_civet', 'macaque_not_stump_tailed', 'unidentified_macaque',
+        'red_shanked_douc', 'unidentified_ungulates']

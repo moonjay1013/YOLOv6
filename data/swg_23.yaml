@@ -1,0 +1,16 @@
+train: /home/moonjay/datasets/Resized_SWG/images/train
+val: /home/moonjay/datasets/Resized_SWG/images/val
+test: /home/moonjay/datasets/Resized_SWG/images/test  # generalize
+
+speed: /home/moonjay/datasets/Resized_SWG/images/val
+
+is_coco: False
+
+nc: 23  # number of classes
+names:
+  [ 'chinese_serow', 'northern_treeshrew', 'assam_or_rhesus_macaque', 'malayan_porcupine',
+    'crab_eating_mongoose', 'ferret_badger', 'large_antlered_muntjac', 'stump_tailed_macaque',
+    'annamite_striped_rabbit', 'asiatic_brush_tailed_porcupine', 'grey_peacock_pheasant',
+    'yellow_throated_marten', 'eurasian_wild_pig', 'pallass_squirrel', 'common_palm_civet', 'silver_pheasant',
+    'red_junglefowl', 'spotted_linsang', 'masked_palm_civet', 'pig_tailed_macaque',
+    'red_cheeked_squirrel', 'roosevelts_muntjac_group', 'sambar' ]
