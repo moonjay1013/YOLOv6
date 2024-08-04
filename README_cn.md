@@ -7,12 +7,12 @@ YOLOv6官方论文:
 - [YOLOv6: A Single-Stage Object Detection Framework for Industrial Applications](https://arxiv.org/abs/2209.02976)
 
 
-## What's New In This Repository
-- [2024.02.12] Replace BACKBONE to lightweight models: ShuffleNetv2, GHostNet, MobileNetv3
-- [2024.03.11] Update NECK to GolD-Neck
-- [2024.04.09] Improved RepVGGBlock, get ACBlock `[3×3][1×3][3×1][1×1]`
-- [2024.04.11] Improved Structure, get RepC2f
-- [2024.04.15] Update RepOptimizer to adapt to ACBlock 
+## 这篇仓库相较于YOLOv6更新了什么
+- [2024.02.12] 修改 BACKBONE 为轻量级模型: ShuffleNetv2, GHostNet, MobileNetv3
+- [2024.03.11] 更新 NECK 为 GolD-Neck
+- [2024.04.09] 改进 RepVGGBlock, 得到 ACBlock `[3×3][1×3][3×1][1×1]`
+- [2024.04.11] 改进 Structure, 得到 RepC2f
+- [2024.04.15] 更新 RepOptimizer 以适配 ACBlock 
 ## 模型指标 (正在更新...)
 | 模型                                                       | 输入尺寸 | mAP<sup>val<br/>0.5:0.95              | 速度<sup>T4<br/>trt fp16 b1 <br/>(fps) | 速度<sup>T4<br/>trt fp16 b32 <br/>(fps) | Params<br/><sup> (M) | FLOPs<br/><sup> (G) |
 | :----------------------------------------------------------- | ---- | :------------------------------------ | --------------------------------------- | ---------------------------------------- | -------------------- | ------------------- |
