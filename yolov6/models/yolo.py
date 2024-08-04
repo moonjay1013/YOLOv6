@@ -110,7 +110,8 @@ def build_network(config, channels, num_classes, num_layers, fuse_ab=False, dist
             channels_list=channels_list,
             num_repeats=num_repeat,
             # block=block,
-            block=ACBlock,
+            # block=ACBlock,
+            block=ACLinearAddBlock,  # ToDo -- hyper_search
             fuse_P2=fuse_P2,
             cspsppf=cspsppf
         )

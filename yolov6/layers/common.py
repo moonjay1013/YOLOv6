@@ -548,6 +548,62 @@ class LinearAddBlock(nn.Module):
         return out
 
 
+############################
+# AC - CSLA
+############################
+class ACLinearAddBlock(nn.Module):
+
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1,
+                 dilation=1, groups=1, padding_mode='zeros', use_se=False, is_csla=False, conv_scale_init=1.0):
+        super(ACLinearAddBlock, self).__init__()
+        self.in_channels = in_channels
+        self.relu = nn.ReLU()
+        self.conv = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size,
+                              stride=stride, padding=padding, bias=False)
+        self.scale_conv = ScaleLayer(num_features=out_channels, use_bias=False, scale_init=conv_scale_init)
+
+        if padding - kernel_size // 2 >= 0:
+            #   Common use case. E.g., k=3, p=1 or k=5, p=2
+            self.crop = 0
+            # Compared to the KxK layer,
+            # the padding of the 1xK layer and Kx1 layer should be adjust to
+            # align the sliding windows (Fig 2 in the paper)
+            hor_padding = [padding - kernel_size // 2, padding]
+            ver_padding = [padding, padding - kernel_size // 2]
+        else:
+            #   A negative "padding" (padding - kernel_size//2 < 0, which is not a common use case) is cropping.
+            #   Since nn.Conv2d does not support negative padding, we implement it manually
+            self.crop = kernel_size // 2 - padding
+            hor_padding = [0, padding]
+            ver_padding = [padding, 0]
+
+        self.conv_ver = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=(kernel_size, 1),
+                                  stride=stride, padding=ver_padding, bias=False)
+        self.scale_ver = ScaleLayer(num_features=out_channels, use_bias=False, scale_init=conv_scale_init)
+        self.conv_hor = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=(1, kernel_size),
+                                  stride=stride, padding=hor_padding, bias=False)
+        self.scale_hor = ScaleLayer(num_features=out_channels, use_bias=False, scale_init=conv_scale_init)
+
+        if in_channels == out_channels and stride == 1:
+            self.scale_identity = ScaleLayer(num_features=out_channels, use_bias=False, scale_init=1.0)
+        self.bn = nn.BatchNorm2d(out_channels)
+        if is_csla:  # Make them constant
+            self.scale_conv.requires_grad_(False)
+            self.scale_ver.requires_grad_(False)
+            self.scale_hor.requires_grad_(False)
+        if use_se:
+            raise NotImplementedError("se block not supported yet")
+        else:
+            self.se = nn.Identity()
+
+    def forward(self, inputs):
+        out = self.scale_conv(self.conv(inputs)) + self.scale_ver(self.conv_ver(inputs)) + self.scale_hor(self.conv_hor(inputs))
+        if hasattr(self, 'scale_identity'):
+            out += self.scale_identity(inputs)
+        out = self.relu(self.se(self.bn(out)))
+        return out
+
+
 class DetectBackend(nn.Module):
     def __init__(self, weights='yolov6s.pt', device=None, dnn=True):
         super().__init__()
