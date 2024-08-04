@@ -2,14 +2,14 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from ..layers.common import RealVGGBlock, LinearAddBlock
+from ..layers.common import RealVGGBlock, LinearAddBlock, ACLinearAddBlock, ACBlock
 from torch.optim.sgd import SGD
 from yolov6.utils.events import LOGGER
 
 
 def extract_blocks_into_list(model, blocks):
    for module in model.children():
-        if isinstance(module, LinearAddBlock) or isinstance(module, RealVGGBlock):
+        if isinstance(module, (LinearAddBlock, ACLinearAddBlock)) or isinstance(module, (RealVGGBlock,ACBlock)):
             blocks.append(module)
         else:
             extract_blocks_into_list(module, blocks)
@@ -18,14 +18,52 @@ def extract_blocks_into_list(model, blocks):
 def extract_scales(model):
     blocks = []
     extract_blocks_into_list(model['model'], blocks)
+    """
+ACLinearAddBlock(
+  (relu): ReLU(inplace=True)
+  (conv): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+  (scale_conv): ScaleLayer()
+
+  (conv_ver): Conv2d(256, 256, kernel_size=(3, 1), stride=(1, 1), padding=(1, 0), bias=False)
+  (scale_ver): ScaleLayer()
+
+  (conv_hor): Conv2d(256, 256, kernel_size=(1, 3), stride=(1, 1), padding=(0, 1), bias=False)
+  (scale_hor): ScaleLayer()
+
+  (scale_identity): ScaleLayer()
+  (bn): BatchNorm2d(256, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+  (se): Identity()
+),
+LinearAddBlock(
+  (relu): ReLU(inplace=True)
+  (conv): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+  (scale_conv): ScaleLayer()
+
+  (conv_1x1): Conv2d(64, 64, kernel_size=(1, 1), stride=(1, 1), bias=False)
+  (scale_1x1): ScaleLayer()
+
+  (scale_identity): ScaleLayer()
+  (bn): BatchNorm2d(64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+  (se): Identity()
+)
+    """
     scales = []
     for b in blocks:
-        assert isinstance(b, LinearAddBlock)
-        if hasattr(b, 'scale_identity'):
-            scales.append((b.scale_identity.weight.detach(), b.scale_1x1.weight.detach(), b.scale_conv.weight.detach()))
-        else:
-            scales.append((b.scale_1x1.weight.detach(), b.scale_conv.weight.detach()))
-        print('extract scales: ', scales[-1][-2].mean(), scales[-1][-1].mean())
+        assert isinstance(b, (LinearAddBlock, ACLinearAddBlock))
+        if isinstance(b, LinearAddBlock):
+            if hasattr(b, 'scale_identity'):
+                scales.append(
+                    (b.scale_identity.weight.detach(), b.scale_1x1.weight.detach(), b.scale_conv.weight.detach()))
+            else:
+                scales.append((b.scale_1x1.weight.detach(), b.scale_conv.weight.detach()))
+        elif isinstance(b, ACLinearAddBlock):
+            if hasattr(b, 'scale_identity'):
+                scales.append(
+                    (b.scale_identity.weight.detach(), b.scale_hor.weight.detach(), b.scale_ver.weight.detach(),
+                     b.scale_conv.weight.detach()))
+            else:
+                scales.append((b.scale_hor.weight.detach(), b.scale_ver.weight.detach(), b.scale_conv.weight.detach()))
+        # print('extract scales: ', scales[-1][-2].mean(), scales[-1][-1].mean())
     return scales
 
 
@@ -97,7 +135,7 @@ class RepVGGOptimizer(SGD):
         self.num_layers = len(scales)
 
         blocks = []
-        extract_blocks_into_list(model, blocks)
+        extract_blocks_into_list(model, blocks)  # ReadVGG Network
         convs = [b.conv for b in blocks]
         assert len(scales) == len(convs)
 
@@ -119,15 +157,39 @@ class RepVGGOptimizer(SGD):
             in_channels = conv3x3.in_channels
             out_channels = conv3x3.out_channels
             kernel_1x1 = nn.Conv2d(in_channels, out_channels, 1, device=conv3x3.weight.device)
+
+            hor_padding = [0, 1]
+            ver_padding = [1, 0]
+            kernel_ver = nn.Conv2d(in_channels, out_channels, kernel_size=(3,1), padding=ver_padding, device=conv3x3.weight.device)
+            kernel_hor = nn.Conv2d(in_channels, out_channels, kernel_size=(1,3), padding=hor_padding, device=conv3x3.weight.device)
+
             if len(scales) == 2:
                 conv3x3.weight.data = conv3x3.weight * scales[1].view(-1, 1, 1, 1) \
                                       + F.pad(kernel_1x1.weight, [1, 1, 1, 1]) * scales[0].view(-1, 1, 1, 1)
+            elif len(scales) == 3 and in_channels != out_channels:
+                conv3x3.weight.data = conv3x3.weight * scales[2].view(-1, 1, 1, 1) \
+                                      + F.pad(kernel_ver.weight, [1, 1, 0, 0]) * scales[1].view(-1, 1, 1, 1) \
+                                      + F.pad(kernel_hor.weight, [0, 0, 1, 1]) * scales[0].view(-1, 1, 1, 1)
+            elif len(scales) == 4 and in_channels == out_channels:
+                identity = torch.from_numpy(
+                    np.eye(out_channels, dtype=np.float32).reshape(out_channels, out_channels, 1, 1)).to(
+                    conv3x3.weight.device)
+                conv3x3.weight.data = conv3x3.weight * scales[3].view(-1, 1, 1, 1) \
+                                      + F.pad(kernel_ver.weight, [1, 1, 0, 0]) * scales[2].view(-1, 1, 1, 1) \
+                                      + F.pad(kernel_hor.weight, [0, 0, 1, 1]) * scales[1].view(-1, 1, 1, 1)
+                if use_identity_scales:
+                    identity_scale_weight = scales[0]
+                    conv3x3.weight.data += F.pad(identity * identity_scale_weight.view(-1, 1, 1, 1), [1, 1, 1, 1])
+                else:
+                    conv3x3.weight.data += F.pad(identity, [1, 1, 1, 1])
             else:
                 assert len(scales) == 3
                 assert in_channels == out_channels
                 identity = torch.from_numpy(np.eye(out_channels, dtype=np.float32).reshape(out_channels, out_channels, 1, 1)).to(conv3x3.weight.device)
                 conv3x3.weight.data = conv3x3.weight * scales[2].view(-1, 1, 1, 1) + F.pad(kernel_1x1.weight, [1, 1, 1, 1]) * scales[1].view(-1, 1, 1, 1)
-                if use_identity_scales:     # You may initialize the imaginary CSLA block with the trained identity_scale values. Makes almost no difference.
+                if use_identity_scales:
+                    # You may initialize the imaginary CSLA block with the trained identity_scale values.
+                    # Makes almost no difference.
                     identity_scale_weight = scales[0]
                     conv3x3.weight.data += F.pad(identity * identity_scale_weight.view(-1, 1, 1, 1), [1, 1, 1, 1])
                 else:
@@ -137,10 +199,27 @@ class RepVGGOptimizer(SGD):
         self.grad_mask_map = {}
         for scales, conv3x3 in zip(scales_by_idx, conv3x3_by_idx):
             para = conv3x3.weight
+            in_channels = conv3x3.in_channels
+            out_channels = conv3x3.out_channels
             if len(scales) == 2:
                 mask = torch.ones_like(para, device=scales[0].device) * (scales[1] ** 2).view(-1, 1, 1, 1)
                 mask[:, :, 1:2, 1:2] += torch.ones(para.shape[0], para.shape[1], 1, 1, device=scales[0].device) * (scales[0] ** 2).view(-1, 1, 1, 1)
+            if len(scales) == 3 and in_channels != out_channels:
+                mask = torch.ones_like(para, device=scales[0].device) * (scales[2] ** 2).view(-1, 1, 1, 1)
+                mask[:, :, :, 1:2] += torch.ones(para.shape[0], para.shape[1], 3, 1, device=scales[0].device) * (scales[1] ** 2).view(-1, 1, 1, 1)
+                mask[:, :, 1:2, :] += torch.ones(para.shape[0], para.shape[1], 1, 3, device=scales[0].device) * (scales[0] ** 2).view(-1, 1, 1, 1)
+            elif len(scales) == 4 and in_channels == out_channels:
+                mask = torch.ones_like(para, device=scales[0].device) * (scales[3] ** 2).view(-1, 1, 1, 1)
+                mask[:, :, :, 1:2] += torch.ones(para.shape[0], para.shape[1], 3, 1, device=scales[0].device) * (
+                            scales[2] ** 2).view(-1, 1, 1, 1)
+                mask[:, :, 1:2, :] += torch.ones(para.shape[0], para.shape[1], 1, 3, device=scales[0].device) * (
+                            scales[1] ** 2).view(-1, 1, 1, 1)
+                ids = np.arange(para.shape[1])
+                assert para.shape[1] == para.shape[0]
+                mask[ids, ids, 1:2, 1:2] += 1.0
             else:
+                assert len(scales) == 3
+                assert in_channels == out_channels
                 mask = torch.ones_like(para, device=scales[0].device) * (scales[2] ** 2).view(-1, 1, 1, 1)
                 mask[:, :, 1:2, 1:2] += torch.ones(para.shape[0], para.shape[1], 1, 1, device=scales[0].device) * (scales[1] ** 2).view(-1, 1, 1, 1)
                 ids = np.arange(para.shape[1])
