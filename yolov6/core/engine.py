@@ -19,7 +19,6 @@ from torch.utils.tensorboard import SummaryWriter
 import tools.eval as eval
 from yolov6.data.data_load import create_dataloader
 from yolov6.models.yolo import build_model
-from yolov6.models.yolo_lite import build_model as build_lite_model
 
 from yolov6.models.losses.loss import ComputeLoss as ComputeLoss
 from yolov6.models.losses.loss_fuseab import ComputeLoss as ComputeLoss_ab
@@ -413,7 +412,7 @@ class Trainer:
         if 'YOLOv6-lite' in cfg.model.type:
             assert not self.args.fuse_ab, 'ERROR in: YOLOv6-lite models not support fuse_ab mode.'
             assert not self.args.distill, 'ERROR in: YOLOv6-lite models not support distill mode.'
-            model = build_lite_model(cfg, nc, device)
+            return None
         else:
             model = build_model(cfg, nc, device, fuse_ab=self.args.fuse_ab, distill_ns=self.distill_ns)
         weights = cfg.model.pretrained
